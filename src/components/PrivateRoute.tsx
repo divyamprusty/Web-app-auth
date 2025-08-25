@@ -1,0 +1,20 @@
+import React from "react";
+import type { ReactNode } from "react";
+import { UserAuth } from "../context/AuthContext";
+import { Navigate } from "react-router-dom";
+
+type PrivateRouteProps = {
+  children: ReactNode;
+};
+
+const PrivateRoute: React.FC<PrivateRouteProps> = ({ children }) => {
+  const { session } = UserAuth();
+
+  if (!session) {
+    return <Navigate to="/signup" />;
+  }
+
+  return <>{children}</>;
+};
+
+export default PrivateRoute;
