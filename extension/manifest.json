@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "App Auth Sync",
+  "description": "Synchronize Supabase auth state between the web app and this extension.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "App Auth",
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:5173/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:5173/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
