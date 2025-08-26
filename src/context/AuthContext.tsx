@@ -38,19 +38,44 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
-    // Get initial session
+    // Get initial session and broadcast it
     supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session ?? null);
+      const currentSession = data.session ?? null;
+      setSession(currentSession);
+      window.postMessage(
+        { type: "SYNC_TOKEN", token: currentSession?.access_token ?? null },
+        window.origin
+      );
     });
 
-    // Listen for auth state changes
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    // Listen for auth state changes and broadcast
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, changedSession) => {
+      const nextSession = changedSession ?? null;
+      setSession(nextSession);
+      window.postMessage(
+        { type: "SYNC_TOKEN", token: nextSession?.access_token ?? null },
+        window.origin
+      );
     });
+
+    // Receive token sync from extension
+    const onMessage = async (event: MessageEvent) => {
+      if (event.source !== window || event.origin !== window.origin) return;
+      const msg = event.data as { type?: string; token?: string | null };
+      if (msg?.type !== "SYNC_TOKEN") return;
+
+      if (msg.token) {
+        await supabase.auth.setSession({ access_token: msg.token, refresh_token: "" });
+      } else {
+        await supabase.auth.signOut();
+      }
+    };
+    window.addEventListener("message", onMessage);
 
     // Cleanup subscription on unmount
     return () => {
       subscription?.subscription.unsubscribe();
+      window.removeEventListener("message", onMessage);
     };
   }, []);
 
@@ -69,4 +94,4 @@ export const UserAuth = () => {
   const context = useContext(AuthContext);
   if (!context) throw new Error("UserAuth must be used within AuthContextProvider");
   return context;
-};
+}
