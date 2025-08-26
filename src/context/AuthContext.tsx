@@ -8,12 +8,14 @@ type AuthContextType = {
   signInUser: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   session: Session | null;
   signOut: () => Promise<void>;
+  loading: boolean;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   const signUpNewUser = async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({
@@ -40,37 +42,47 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     // Get initial session and broadcast it
     supabase.auth.getSession().then(({ data }) => {
-      const currentSession = data.session ?? null;
-      setSession(currentSession);
-      window.postMessage(
-        { type: "SYNC_TOKEN", token: currentSession?.access_token ?? null },
-        window.origin
-      );
+      const s = data.session ?? null;
+      setSession(s);
+      if (s) {
+        window.postMessage(
+          { type: 'SYNC_TOKEN', token: { access_token: s.access_token, refresh_token: s.refresh_token } },
+          window.origin
+        );
+      }
     });
 
     // Listen for auth state changes and broadcast
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, changedSession) => {
-      const nextSession = changedSession ?? null;
-      setSession(nextSession);
-      window.postMessage(
-        { type: "SYNC_TOKEN", token: nextSession?.access_token ?? null },
-        window.origin
-      );
-    });
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, s) => {
+      setSession(s ?? null);
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (s) {
+          window.postMessage(
+            { type: 'SYNC_TOKEN', token: { access_token: s.access_token, refresh_token: s.refresh_token } },
+            window.origin
+          );
+        }
+      } else if (event === 'SIGNED_OUT') {
+        window.postMessage({ type: 'SYNC_TOKEN', token: null }, window.origin);
+      }
+    })
 
     // Receive token sync from extension
     const onMessage = async (event: MessageEvent) => {
       if (event.source !== window || event.origin !== window.origin) return;
-      const msg = event.data as { type?: string; token?: string | null };
-      if (msg?.type !== "SYNC_TOKEN") return;
+      const msg = event.data as { type?: string; token?: { access_token: string; refresh_token: string } | null };
+      if (msg?.type !== 'SYNC_TOKEN') return;
 
-      if (msg.token) {
-        await supabase.auth.setSession({ access_token: msg.token, refresh_token: "" });
+      if (msg.token?.access_token && msg.token?.refresh_token) {
+        await supabase.auth.setSession({
+          access_token: msg.token.access_token,
+          refresh_token: msg.token.refresh_token
+        });
       } else {
         await supabase.auth.signOut();
       }
     };
-    window.addEventListener("message", onMessage);
+    window.addEventListener('message', onMessage);
 
     // Cleanup subscription on unmount
     return () => {
@@ -84,7 +96,7 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ signUpNewUser, signInUser, session, signOut }}>
+    <AuthContext.Provider value={{ signUpNewUser, signInUser, session, signOut, loading }}>
       {children}
     </AuthContext.Provider>
   );
