@@ -16,7 +16,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Loop suppression flags
   const applyingExternalRef = useRef<boolean>(false);
+  const suppressNextBroadcastRef = useRef<boolean>(false);
 
   const signUpNewUser = async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({
@@ -54,6 +57,14 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
     });
 
     const { data: subscription } = supabase.auth.onAuthStateChange((event, s) => {
+      // If we just applied an external token, ignore the very next SDK event
+      if (suppressNextBroadcastRef.current) {
+        suppressNextBroadcastRef.current = false;
+        setSession(s ?? null);
+        setLoading(false);
+        return;
+      }
+
       setSession(s ?? null);
       setLoading(false);
       if (applyingExternalRef.current) return;
@@ -82,6 +93,7 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
         if (current && current.access_token === msg.token.access_token) return;
 
         applyingExternalRef.current = true;
+        suppressNextBroadcastRef.current = true;
         try {
           await supabase.auth.setSession({
             access_token: msg.token.access_token,
@@ -91,9 +103,15 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
           applyingExternalRef.current = false;
         }
       } else {
+        const { data: { session: current } } = await supabase.auth.getSession();
+        if (!current) return;
+
         applyingExternalRef.current = true;
+        suppressNextBroadcastRef.current = true;
         try {
           await supabase.auth.signOut({ scope: "local" });
+        } catch {
+          // ignore 403 or already-signed-out
         } finally {
           applyingExternalRef.current = false;
         }
@@ -108,7 +126,13 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const signOut = async () => {
-    await supabase.auth.signOut({ scope: "local" });
+    const { data: { session: current } } = await supabase.auth.getSession();
+    if (!current) return;
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      // ignore 403 or already-signed-out
+    }
   };
 
   return (
