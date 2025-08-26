@@ -15,6 +15,22 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
 
+  const broadcastAuthStateToExtension = (supabaseSession: Session | null) => {
+    try {
+      // Send to the content script (picked up via window message)
+      window.postMessage(
+        {
+          source: "WEB_APP",
+          type: "SUPABASE_AUTH_STATE",
+          payload: supabaseSession,
+        },
+        "*"
+      );
+    } catch {
+      // ignore
+    }
+  };
+
   const signUpNewUser = async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({
       email: email.toLowerCase(),
@@ -38,18 +54,45 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
-    // Get initial session
+    // Get initial session and broadcast to extension so it can sync
     supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session ?? null);
+      const current = data.session ?? null;
+      setSession(current);
+      broadcastAuthStateToExtension(current);
     });
 
-    // Listen for auth state changes
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    // Listen for auth state changes from Supabase and broadcast them
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      broadcastAuthStateToExtension(newSession ?? null);
     });
 
-    // Cleanup subscription on unmount
+    // Listen for messages from the extension
+    const handleMessage = async (event: MessageEvent) => {
+      if (!event || !event.data || typeof event.data !== "object") return;
+      const data = event.data as { source?: string; type?: string; payload?: any };
+      if (data.source !== "EXTENSION") return;
+
+      if (data.type === "EXTENSION_SET_SESSION") {
+        const tokens = data.payload as { access_token?: string; refresh_token?: string };
+        if (tokens && tokens.access_token && tokens.refresh_token) {
+          await supabase.auth.setSession({
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+          });
+        }
+      }
+
+      if (data.type === "EXTENSION_SIGN_OUT") {
+        await supabase.auth.signOut();
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+
+    // Cleanup
     return () => {
+      window.removeEventListener("message", handleMessage);
       subscription?.subscription.unsubscribe();
     };
   }, []);

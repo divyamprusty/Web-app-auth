@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react"; // ← make sure useEffect is imported
+import React, { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { UserAuth } from "../context/AuthContext";
-import { supabase } from "../supabaseClient"; // ← assuming this is your client
+// removed unused supabase import
 
 const Signin: React.FC = () => {
   const [email, setEmail] = useState<string>("");
@@ -11,13 +11,6 @@ const Signin: React.FC = () => {
 
   const { signInUser } = UserAuth();
   const navigate = useNavigate();
-
-  // 🧪 Debug listener for postMessage
-  useEffect(() => {
-    window.addEventListener("message", (e) => {
-      console.log("WebApp →", e.data);
-    });
-  }, []);
 
   const handleSignIn = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -28,18 +21,6 @@ const Signin: React.FC = () => {
       setTimeout(() => setError(null), 3000);
     } else {
       setError(null);
-
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
-
-      if (token) {
-        console.log("Posting token:", token); // ← confirm it's firing
-        window.postMessage({
-          type: "SYNC_TOKEN",
-          token
-        }, "http://localhost:3000"); // ← use explicit origin
-      }
-
       navigate("/dashboard");
     }
   };
