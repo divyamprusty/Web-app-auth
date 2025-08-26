@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../supabaseClient";
@@ -16,10 +16,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-
-  // Loop suppression flags
-  const applyingExternalRef = useRef<boolean>(false);
-  const suppressNextBroadcastRef = useRef<boolean>(false);
 
   const signUpNewUser = async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({
@@ -48,7 +44,9 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
       const s = data.session ?? null;
       setSession(s);
       setLoading(false);
+      console.log("[web] getSession -> hasSession:", !!s);
       if (s) {
+        console.log("[web] broadcast init tokens");
         window.postMessage(
           { type: "SYNC_TOKEN", source: "web", token: { access_token: s.access_token, refresh_token: s.refresh_token } },
           window.origin
@@ -57,81 +55,38 @@ export const AuthContextProvider = ({ children }: { children: ReactNode }) => {
     });
 
     const { data: subscription } = supabase.auth.onAuthStateChange((event, s) => {
-      // If we just applied an external token, ignore the very next SDK event
-      if (suppressNextBroadcastRef.current) {
-        suppressNextBroadcastRef.current = false;
-        setSession(s ?? null);
-        setLoading(false);
-        return;
-      }
-
+      console.log("[web] onAuthStateChange:", event, "hasSession:", !!s);
       setSession(s ?? null);
       setLoading(false);
-      if (applyingExternalRef.current) return;
 
       if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && s) {
+        console.log("[web] broadcast tokens for event:", event);
         window.postMessage(
           { type: "SYNC_TOKEN", source: "web", token: { access_token: s.access_token, refresh_token: s.refresh_token } },
           window.origin
         );
       } else if (event === "SIGNED_OUT") {
+        console.log("[web] broadcast signout");
         window.postMessage({ type: "SYNC_TOKEN", source: "web", token: null }, window.origin);
       }
     });
 
-    const onMessage = async (event: MessageEvent) => {
-      if (event.source !== window || event.origin !== window.origin) return;
-      const msg = event.data as {
-        type?: string;
-        source?: "web" | "popup" | "extension";
-        token?: { access_token: string; refresh_token: string } | null;
-      };
-      if (msg?.type !== "SYNC_TOKEN" || msg.source === "web") return;
-
-      if (msg.token?.access_token && msg.token?.refresh_token) {
-        const current = (await supabase.auth.getSession()).data.session;
-        if (current && current.access_token === msg.token.access_token) return;
-
-        applyingExternalRef.current = true;
-        suppressNextBroadcastRef.current = true;
-        try {
-          await supabase.auth.setSession({
-            access_token: msg.token.access_token,
-            refresh_token: msg.token.refresh_token,
-          });
-        } finally {
-          applyingExternalRef.current = false;
-        }
-      } else {
-        const { data: { session: current } } = await supabase.auth.getSession();
-        if (!current) return;
-
-        applyingExternalRef.current = true;
-        suppressNextBroadcastRef.current = true;
-        try {
-          await supabase.auth.signOut({ scope: "local" });
-        } catch {
-          // ignore 403 or already-signed-out
-        } finally {
-          applyingExternalRef.current = false;
-        }
-      }
-    };
-    window.addEventListener("message", onMessage);
-
     return () => {
       subscription?.subscription.unsubscribe();
-      window.removeEventListener("message", onMessage);
     };
   }, []);
 
   const signOut = async () => {
     const { data: { session: current } } = await supabase.auth.getSession();
-    if (!current) return;
+    if (!current) {
+      console.log("[web] signOut() skipped, no current session");
+      return;
+    }
     try {
+      console.log("[web] signOut(local)");
       await supabase.auth.signOut({ scope: "local" });
-    } catch {
-      // ignore 403 or already-signed-out
+    } catch (e) {
+      console.warn("[web] signOut(local) error (ignored):", e);
     }
   };
 
