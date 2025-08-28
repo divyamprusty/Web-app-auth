@@ -10,7 +10,7 @@ type PrivateRouteProps = {
 const PrivateRoute: React.FC<PrivateRouteProps> = ({ children }) => {
   const { session, loading } = UserAuth();
   if (loading) return null;
-  if (!session) return <Navigate to="/signup" />;
+  if (!session) return <Navigate to="/signin" />;
   return <>{children}</>;
 };
 
